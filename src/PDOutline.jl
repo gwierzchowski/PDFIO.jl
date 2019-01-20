@@ -23,7 +23,23 @@ Check description of function `pdDocGetOutline` for more information.
 Methods which operate on this structure:
 - `item_level(item::PDOutlineItem)` - return nesting level of item inside whole Outline.
 """
-PDOutlineItem = Dict{Symbol, Any}
+# PDOutlineItem = Dict{Symbol, Any}
+
+# I would like to write:
+# type PDOutlineItem <: Dict{Symbol, Any} end
+# but this is not posible
+# Below workaround is AWFULL, ble....
+abstract type PDOutlineItem  end # no AbstractDict in julia ?!?
+struct PDOutlineItemImpl <: PDOutlineItem
+    props::Dict{Symbol, Any}
+end
+PDOutlineItem() = PDOutlineItemImpl(Dict{Symbol, Any}())
+Base.keys(i::PDOutlineItemImpl) = keys(i.props)
+Base.haskey(i::PDOutlineItemImpl, k::Symbol) = haskey(i.props, k)
+Base.getindex(i::PDOutlineItemImpl, k::Symbol) = getindex(i.props, k)
+Base.setindex!(i::PDOutlineItemImpl, v::Any, k::Symbol) = setindex!(i.props, v, k)
+Base.iterate(i::PDOutlineItemImpl) = iterate(i.props)
+Base.iterate(i::PDOutlineItemImpl, s::Int) = iterate(i.props, s)
 
 """
 ```
@@ -38,7 +54,23 @@ Methods which operate on this structure:
 - `items_count(o::PDOutline; depth::Number = Inf)` - return number of items inside Outline.
 - `items(o::PDOutline; depth::Number = Inf)` - return iterator thru Outline items.
 """
-PDOutline = Vector{Union{PDOutlineItem, Vector}}
+# PDOutline = Vector{Union{PDOutlineItem, Vector}}
+
+# I would like to write:
+# type PDOutline <: Vector{Union{PDOutlineItem, Vector}} end
+# but this is not posible
+# Below workaround is AWFULL, ble....
+abstract type PDOutline <: AbstractVector{Union{PDOutlineItem, Vector}} end
+struct PDOutlineImpl <: PDOutline
+    items::Vector{Union{PDOutlineItem, Vector}}
+end
+PDOutline() = PDOutlineImpl(Vector{Union{PDOutlineItem, Vector}}())
+_conv(i::PDOutlineItem) = i
+_conv(i::Vector{Union{PDOutlineItem, Vector}}) = PDOutlineImpl(i)
+Base.size(o::PDOutlineImpl) = size(o.items)
+Base.push!(o::PDOutlineImpl, i::PDOutlineItem) = push!(o.items, i)
+Base.push!(o::PDOutlineImpl, i::PDOutlineImpl) = push!(o.items, i.items)
+Base.getindex(o::PDOutlineImpl, I...) = _conv(getindex(o.items, I...))
 
 ####################################################################################
 ## Reading Outline from PDF
