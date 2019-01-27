@@ -17,29 +17,53 @@ using ..Cos
 ```
 Representation of PDF document Outline item.
 
-It is currently defined as `Dict{Symbol, Any}`.
+It is currently defined as subtype of `AbstractDict{Symbol, Any}`.
 Check description of function `pdDocGetOutline` for more information.
-
-Methods which operate on this structure:
-- `item_level(item::PDOutlineItem)` - return nesting level of item inside whole Outline.
 """
-# PDOutlineItem = Dict{Symbol, Any}
+# Was: PDOutlineItem = Dict{Symbol, Any}
+# what is not good because it has side effect with overloaded below show method.
 
 # I would like to write:
 # type PDOutlineItem <: Dict{Symbol, Any} end
-# but this is not posible
-# Below workaround is AWFULL, ble....
-abstract type PDOutlineItem  end # no AbstractDict in julia ?!?
-struct PDOutlineItemImpl <: PDOutlineItem
-    props::Dict{Symbol, Any}
+# only implement show, but this is not posible in Julia 1.
+#
+# I don't quite like below ompelementation, but looks like it is the only possible for now
+# The set of implemented menthods was little guess and hit/miss work.
+# TODO: Tyoes: AbstractDict and AbstractSet are not documented - consider opening issue in JuliaLang
+# TODO: Once getproperty was implemented it mey be sensible to not base this on AbstractDict
+#       and remove some overloaded methods, like: get, setindex, keys
+struct PDOutlineItem <: AbstractDict{Symbol, Any}
+    props::Dict{Symbol, Any} # TODO: Consider using ImmutableDict
+    function PDOutlineItem()
+        new(Dict{Symbol, Any}())
+    end
+    function PDOutlineItem(p::Dict{Symbol, Any})
+        new(p)
+    end
 end
-PDOutlineItem() = PDOutlineItemImpl(Dict{Symbol, Any}())
-Base.keys(i::PDOutlineItemImpl) = keys(i.props)
-Base.haskey(i::PDOutlineItemImpl, k::Symbol) = haskey(i.props, k)
-Base.getindex(i::PDOutlineItemImpl, k::Symbol) = getindex(i.props, k)
-Base.setindex!(i::PDOutlineItemImpl, v::Any, k::Symbol) = setindex!(i.props, v, k)
-Base.iterate(i::PDOutlineItemImpl) = iterate(i.props)
-Base.iterate(i::PDOutlineItemImpl, s::Int) = iterate(i.props, s)
+Base.length(i::PDOutlineItem) = length(getfield(i, :props))
+Base.keys(i::PDOutlineItem) = keys(getfield(i, :props))
+Base.get(i::PDOutlineItem, k::Symbol, def) = get(getfield(i, :props), k, def)
+Base.setindex!(i::PDOutlineItem, v::Any, k::Symbol) = setindex!(getfield(i, :props), v, k)
+Base.iterate(i::PDOutlineItem) = iterate(getfield(i, :props))
+Base.iterate(i::PDOutlineItem, s::Int) = iterate(getfield(i, :props), s)
+
+function Base.getproperty(i::PDOutlineItem, s::Symbol)
+    try
+        s == :props && return getfield(i, :props)
+        if s == :Level
+            haskey(getfield(i, :props), :Level) && return getfield(i, :props)[:Level]
+            haskey(getfield(i, :props), :Index) && return length(getfield(i, :props)[:Index])
+            return 1
+        else
+            return getfield(i, :props)[s]
+        end
+    catch KeyError
+        return missing
+    end
+end
+Base.propertynames(i::PDOutlineItem) = union(keys(getfield(i, :props)), :Level)
+# TODO: possibly implement hasproperty()
 
 """
 ```
@@ -47,30 +71,40 @@ Base.iterate(i::PDOutlineItemImpl, s::Int) = iterate(i.props, s)
 ```
 Representation of PDF document Outline (Table of Contents).
 
-It is currently defined as `Vector{Union{PDOutlineItem, Vector}}`.
+It is currently defined as subtype of `AbstractVector{Union{PDOutlineItem, AbstractVector}}`,
+which is actually `AbstractVector{Union{PDOutlineItem, PDOutline}}`.
 Check description of function `pdDocGetOutline` for more information.
 
 Methods which operate on this structure:
 - `items_count(o::PDOutline; depth::Number = Inf)` - return number of items inside Outline.
-- `items(o::PDOutline; depth::Number = Inf)` - return iterator thru Outline items.
+- `items(o::PDOutline; depth::Number = Inf)` - return iterator of Outline items.
 """
-# PDOutline = Vector{Union{PDOutlineItem, Vector}}
+# Was: PDOutline = Vector{Union{PDOutlineItem, Vector}}
+# what is not good because it has side effect with overloaded below show method.
 
 # I would like to write:
 # type PDOutline <: Vector{Union{PDOutlineItem, Vector}} end
-# but this is not posible
-# Below workaround is AWFULL, ble....
-abstract type PDOutline <: AbstractVector{Union{PDOutlineItem, Vector}} end
-struct PDOutlineImpl <: PDOutline
-    items::Vector{Union{PDOutlineItem, Vector}}
+# only implement show, but this is not posible in Julia 1.
+#
+# I don't quite like below ompelementation, but looks like it is the only possible for now
+# The set of implemented menthods is based on https://docs.julialang.org/en/v1/manual/interfaces/#man-interface-array-1
+# In this case however I had to implelent vararg version of getindex instead of two other specified in documantation.
+struct PDOutline <: AbstractVector{Union{PDOutlineItem, AbstractVector}}
+    items::Vector{Union{PDOutlineItem, AbstractVector}}
+    function PDOutline()
+        new(Vector{Union{PDOutlineItem, AbstractVector}}())
+    end
+    function PDOutline(i::Vector{Union{PDOutlineItem, AbstractVector}})
+        new(i)
+    end
 end
-PDOutline() = PDOutlineImpl(Vector{Union{PDOutlineItem, Vector}}())
 _conv(i::PDOutlineItem) = i
-_conv(i::Vector{Union{PDOutlineItem, Vector}}) = PDOutlineImpl(i)
-Base.size(o::PDOutlineImpl) = size(o.items)
-Base.push!(o::PDOutlineImpl, i::PDOutlineItem) = push!(o.items, i)
-Base.push!(o::PDOutlineImpl, i::PDOutlineImpl) = push!(o.items, i.items)
-Base.getindex(o::PDOutlineImpl, I...) = _conv(getindex(o.items, I...))
+_conv(i::Vector{Union{PDOutlineItem, AbstractVector}}) = PDOutline(i)
+_conv(o::PDOutline) = o
+Base.size(o::PDOutline) = size(o.items)
+Base.getindex(o::PDOutline, I...) = _conv(getindex(o.items, I...))
+# setindex! is intentionally not implelented - Outline object is of informative nature,
+# I do not see ane use case in which this object would have to be changed by user.
 
 ####################################################################################
 ## Reading Outline from PDF
@@ -81,7 +115,7 @@ function get_outline_node_compact(
             curr_depth::Int,
             max_depth::Number,
             index::Vector{Int})
-    arr = PDOutline()
+    outl = PDOutline()
     support_index = length(index) > 0
     curr_ref = first_ref
     while true
@@ -98,11 +132,11 @@ function get_outline_node_compact(
             elseif curr_depth > 0
                 item[:Level] = curr_depth + 1
             end
-            push!(arr, item)
+            push!(outl.items, item)
             ref_nest = get(obj, cn"First")
             if ref_nest !== CosNull && curr_depth < max_depth
                 support_index && push!(index, 1)
-                push!(arr, get_outline_node_compact(cosDoc, ref_nest, get(obj, cn"Last"), curr_depth + 1, max_depth, index))
+                push!(outl.items, get_outline_node_compact(cosDoc, ref_nest, get(obj, cn"Last"), curr_depth + 1, max_depth, index))
                 if support_index
                     pop!(index)
                     index[end] = index[end] + 1
@@ -113,7 +147,7 @@ function get_outline_node_compact(
         curr_ref = get(obj, cn"Next")
         curr_ref === CosNull && break
     end
-    return arr
+    return outl
 end
 
 get_outline_node_compact(
@@ -215,7 +249,7 @@ function get_outline_node_full(
     end
 
     curr_ref = first_ref
-    arr = PDOutline()
+    outl = PDOutline()
     support_index = length(index) > 0
     while true
         obj = cosDocGetObject(cosDoc, curr_ref)
@@ -295,11 +329,11 @@ function get_outline_node_full(
                 label !== nothing && (item[:PageLabel] = label)
             end
 
-            push!(arr, item)
+            push!(outl.items, item)
             ref_nest = get(obj, cn"First")
             if ref_nest !== CosNull && curr_depth < max_depth
                 support_index && push!(index, 1)
-                push!(arr, get_outline_node_full(cosDoc, ref_nest, get(obj, cn"Last"), curr_depth + 1, max_depth, index, pgmap))
+                push!(outl.items, get_outline_node_full(cosDoc, ref_nest, get(obj, cn"Last"), curr_depth + 1, max_depth, index, pgmap))
                 if support_index
                     pop!(index)
                     index[end] = index[end] + 1
@@ -310,7 +344,7 @@ function get_outline_node_full(
         curr_ref = get(obj, cn"Next")
         curr_ref === CosNull && break
     end
-    return arr
+    return outl
 end
 
 get_outline_node_full(
@@ -327,6 +361,7 @@ get_outline_node_full(
     item_level(item::PDOutlineItem) -> Int
 ```
 Return nesting level of item inside whole Outline.
+TODO: This method is to be removed (superseded by .Level property)
 """
 function item_level(item::PDOutlineItem)
     haskey(item, :Level) && return item[:Level]
@@ -392,7 +427,7 @@ function Base.iterate(oi::PDOutlineIter, state)
         return iterate(oi, (state[1], it[2], state[3])) # try next position from current vector
     end
     @assert itn[1] isa PDOutlineItem # first item in group should be an outline item
-    if item_level(itn[1]) - 1 > oi.max_depth
+    if itn[1].Level::Int - 1 > oi.max_depth
         return iterate(oi, (state[1], it[2], state[3])) # try next position from current vector
     end
     return (itn[1], (it[1], itn[2], (state[1], it[2], state[3]))) # it[1] must be a vector, nest into
@@ -423,6 +458,12 @@ function Base.show(io::IO, ::MIME"text/plain", item::PDOutlineItem; indent::Bool
     summary(io, item)
     println(io, ":")
     show(io, item; indent = indent)
+end
+
+function Base.summary(io::IO, o::PDOutline; depth::Number = Inf)
+    cnt = items_count(o, depth = depth)
+    print(io, "$cnt-element ")
+    Base.showarg(io, o, true)
 end
 
 function Base.show(io::IO, o::PDOutline; depth::Number = Inf)
